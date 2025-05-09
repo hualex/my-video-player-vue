@@ -1,52 +1,54 @@
 <template>
-  <div :class="['controls-panel-container', { collapsed: isCollapsed }]">
+  <div :class="['controls-panel-container', { 'is-collapsed-style': isCollapsed }]" ref="controlsPanelRef">
     <button class="collapse-toggle-btn" @click="$emit('toggle-collapse')" title="折叠/展开面板">
       <font-awesome-icon :icon="['fas', 'chevron-left']" />
     </button>
 
     <div class="panel-section inputs-section">
       <div class="input-group">
-        <label for="videoUrlInput">视频文件URL:</label>
-        <!-- 确保此行没有行内HTML注释 -->
-        <input type="text" id="videoUrlInput" v-model="localVideoUrl" placeholder="视频URL..." />
+        <label for="videoUrlInputPanel">视频文件URL:</label>
+        <input type="text" id="videoUrlInputPanel" v-model="localVideoUrl" placeholder="例如: http://.../video.mp4" />
         <span class="filename-display">{{ videoFilename }}</span>
       </div>
       <div class="input-group">
-        <label for="subtitleUrlInput">字幕文件URL:</label>
-        <!-- 确保此行没有行内HTML注释 -->
-        <input type="text" id="subtitleUrlInput" v-model="localSubtitleUrl" placeholder="字幕URL (.vtt, .srt, .ass)..." />
+        <label for="subtitleUrlInputPanel">字幕文件URL:</label>
+        <input type="text" id="subtitleUrlInputPanel" v-model="localSubtitleUrl" placeholder="例如: http://.../subs.srt" />
         <span class="filename-display">{{ subtitleFilename }}</span>
       </div>
-      <button class="action-button load-media-btn" @click="emitLoadMedia">
+      <button class="action-button load-media-btn" @click="emitLoadMedia" :disabled="isLoadingList">
         <font-awesome-icon :icon="['fas', 'play-circle']" /> 加载媒体
       </button>
     </div>
 
     <div class="panel-section file-browser-section">
       <div class="input-group">
-        <label for="serverUrlInput">服务器文件列表URL:</label>
+        <label for="serverUrlInputPanel">服务器文件列表URL:</label>
         <div class="server-url-wrapper">
-          <!-- 确保此行没有行内HTML注释 -->
-          <input type="text" id="serverUrlInput" v-model="localServerUrl" placeholder="例如 http://localhost/files/" />
-          <button class="action-button fetch-list-btn" @click="fetchFiles">
+          <input type="text" id="serverUrlInputPanel" v-model="localServerUrl" placeholder="例如: http://localhost/files/" @keyup.enter="fetchFiles" />
+          <button class="action-button fetch-list-btn" @click="fetchFiles" :disabled="isLoadingList">
             <font-awesome-icon :icon="['fas', 'folder-open']" /> 获取
           </button>
         </div>
       </div>
-      <div class="file-list-wrapper" ref="fileListContainerRef" @contextmenu="handleFileListContextMenu">
-        <div v-if="isLoadingList" class="list-placeholder">加载中...</div>
-        <div v-else-if="!fileItems.length && !initialListMessage" class="list-placeholder">(无文件)</div>
-        <div v-else-if="initialListMessage && !fileItems.length" class="list-placeholder">{{ initialListMessage }}</div>
-        <!-- 确保此 v-for 的 div 开始标签内没有行内HTML注释 -->
+      <div class="file-list-wrapper" ref="fileListContainerRef" @contextmenu.prevent="handleFileListContextMenu">
+        <div v-if="isLoadingList" class="list-placeholder">
+            <font-awesome-icon icon="spinner" spin class="fa-lg" /> 加载列表中...
+        </div>
+        <div v-else-if="fetchError" class="list-placeholder error-text">
+            {{ fetchError }}
+        </div>
+        <div v-else-if="!fileItems.length && initialListMessage" class="list-placeholder">{{ initialListMessage }}</div>
+        <div v-else-if="!fileItems.length && !initialListMessage" class="list-placeholder">(无文件或无法解析)</div>
+
         <div
           v-for="item in fileItems"
-          :key="item.url + item.name"
+          :key="item.url + item.name + item.is_directory"
           :class="['file-item', { directory: item.is_directory, video: item.isVideo, subtitle: item.isSubtitle }]"
           :title="item.name"
           @click="handleFileItemClick(item)"
           :data-url="item.url"
           :data-name="item.name"
-          :data-is-directory="item.is_directory"
+          :data-is-directory="String(item.is_directory)"
         >
           <font-awesome-icon :icon="getFileIcon(item)" class="file-icon" />
           <span>{{ item.name }}</span>
@@ -54,13 +56,12 @@
       </div>
     </div>
 
-    <!-- Custom Context Menu -->
-    <!-- 确保此 div 开始标签内没有行内HTML注释 -->
     <div
         v-if="contextMenu.visible"
         class="custom-context-menu-vue"
         :style="{ top: contextMenu.top + 'px', left: contextMenu.left + 'px' }"
         @click.stop
+        ref="contextMenuRef"
     >
         <ul>
             <li v-if="contextMenu.itemType === 'file'" @click="contextAction('download')">
@@ -83,8 +84,10 @@
 </template>
 
 <script>
-// The <script> and <style> parts should be the same as the previous "complete modified file" version.
-// I'm omitting them here for brevity, but ensure they are unchanged from that version.
+import { faSpinner } from '@fortawesome/free-solid-svg-icons';
+import { library } from '@fortawesome/fontawesome-svg-core';
+library.add(faSpinner);
+
 export default {
   name: 'ControlsPanel',
   props: {
@@ -101,39 +104,45 @@ export default {
       localServerUrl: this.serverUrlProp || '',
       fileItems: [],
       isLoadingList: false,
-      initialListMessage: '输入服务器URL获取列表',
+      initialListMessage: '输入服务器URL并点击"获取"',
+      fetchError: null,
       contextMenu: {
         visible: false,
         top: 0,
         left: 0,
         targetUrl: '',
         targetName: '',
-        itemType: '', // 'file' or 'directory'
+        itemType: '',
       },
     };
   },
   computed: {
-    videoFilename() { return this.getFilename(this.localVideoUrl); },
-    subtitleFilename() { return this.getFilename(this.localSubtitleUrl); },
+    videoFilename() { return this.getFilenameDisplay(this.localVideoUrl, '视频'); },
+    subtitleFilename() { return this.getFilenameDisplay(this.localSubtitleUrl, '字幕'); },
   },
   watch: {
     videoUrlProp(newVal) { this.localVideoUrl = newVal; },
     subtitleUrlProp(newVal) { this.localSubtitleUrl = newVal; },
-    serverUrlProp(newVal) { this.localServerUrl = newVal; },
+    serverUrlProp(newVal) {
+        if (newVal !== this.localServerUrl) {
+            this.localServerUrl = newVal;
+        }
+    },
     localVideoUrl(newVal) { this.$emit('update:videoUrlProp', newVal); },
     localSubtitleUrl(newVal) { this.$emit('update:subtitleUrlProp', newVal); },
     localServerUrl(newVal) { this.$emit('update:serverUrlProp', newVal); },
   },
   methods: {
-    getFilename(url) {
-      if (!url) return '未加载';
+    getFilenameDisplay(url, type = '文件') {
+      if (!url || url.trim() === '') return `未加载${type}`;
       try {
         const path = new URL(url).pathname;
-        return decodeURIComponent(path.substring(path.lastIndexOf('/') + 1)) || url;
+        const decodedName = decodeURIComponent(path.substring(path.lastIndexOf('/') + 1));
+        return decodedName || `加载${type}中...`;
       } catch {
-        // Fallback for invalid URLs or if URL parsing fails unexpectedly
         const lastSlash = url.lastIndexOf('/');
-        return url.substring(lastSlash + 1) || '无效URL';
+        const name = url.substring(lastSlash + 1);
+        return name || `无效URL`;
       }
     },
     emitLoadMedia() {
@@ -143,40 +152,27 @@ export default {
       });
     },
     async fetchFiles() {
-      if (!this.localServerUrl.trim()) {
+      const urlToFetch = this.localServerUrl.trim();
+      if (!urlToFetch) {
         this.$emit('status', '请输入服务器URL', 'warning', 3000);
         return;
       }
       this.isLoadingList = true;
       this.fileItems = [];
-      this.initialListMessage = ''; // Clear initial message
-      this.$emit('fetch-file-list', this.localServerUrl.trim());
+      this.initialListMessage = '';
+      this.fetchError = null;
+      this.$emit('status', `正在获取: ${urlToFetch}`, 'info');
 
       try {
-        let fetchUrl = this.localServerUrl.trim();
-        // Basic directory check: if no extension or ends with /, assume directory
-        try {
-            let urlObj = new URL(fetchUrl);
-            const pathname = urlObj.pathname;
-            if (!pathname.endsWith('/')) {
-                const lastSegment = pathname.substring(pathname.lastIndexOf('/') + 1);
-                if (!lastSegment.includes('.') || lastSegment.indexOf('.') === 0 || lastSegment.split('.').pop().length > 5) { // Heuristic for no extension or very long "extension"
-                    urlObj.pathname += '/';
-                }
-            }
-            fetchUrl = urlObj.href;
-        } catch (e) {
-            // If initial URL is not valid, try appending slash if it doesn't look like a file
-            if (!fetchUrl.endsWith('/') && !fetchUrl.match(/\.[a-zA-Z0-9]{1,5}($|\?|#)/) ) {
-                 fetchUrl += '/';
-            }
-            console.warn("Initial server URL might be malformed, attempting with heuristic:", fetchUrl, e);
+        let currentFetchUrl = urlToFetch;
+        // MODIFIED LINE FOR ESLINT: Removed unnecessary escape for ?
+        if (!currentFetchUrl.endsWith('/') && !currentFetchUrl.match(/\.[a-zA-Z0-9]{2,5}(?:[?#]|$)/)) {
+            currentFetchUrl += '/';
         }
 
-
-        const response = await fetch(fetchUrl);
+        const response = await fetch(currentFetchUrl);
         if (!response.ok) {
-          throw new Error(`HTTP错误 ${response.status} 获取列表 (URL: ${response.url})`);
+          throw new Error(`HTTP ${response.status} (URL: ${response.url})`);
         }
         const htmlText = await response.text();
         const parser = new DOMParser();
@@ -188,49 +184,40 @@ export default {
           const href = link.getAttribute('href');
           let name = link.textContent.trim();
 
-          if (!href || href === './' || href.startsWith('?') || name === '' || name === '.' || name.toLowerCase() === 'parent directory' || (link.closest('pre') && name === '../')) {
-            if (href === '../') {
-                try {
-                    const parentUrl = new URL(href, baseHref).href;
-                    if (parentUrl !== baseHref && new URL(parentUrl).origin === new URL(baseHref).origin) { // Check origin to prevent cross-domain parent links
-                       // Ensure we are not going "above" the root of the origin if baseHref is already root
-                       if (new URL(baseHref).pathname !== '/' || new URL(parentUrl).pathname !== '/') {
-                           return { name: '../ (上一级)', url: parentUrl, is_directory: true, isVideo: false, isSubtitle: false };
-                       }
+          if (!href || href === './' || href.startsWith('?') || name === '' || name === '.' ) {
+            return null;
+          }
+          if (name.toLowerCase() === 'parent directory' || href === '../') {
+            try {
+                const parentUrl = new URL('../', baseHref).href;
+                if (parentUrl !== baseHref && new URL(parentUrl).origin === new URL(baseHref).origin) {
+                    if (new URL(baseHref).pathname !== '/') {
+                         return { name: '../ (上一级)', url: parentUrl, is_directory: true, isVideo: false, isSubtitle: false };
                     }
-                } catch (e) { console.warn("Error resolving parent URL", e); }
-                return null;
-            }
+                }
+            } catch (e) { console.warn("Error resolving parent URL for '../'", e); }
             return null;
           }
 
            if (name === '') {
-               try { name = decodeURIComponent(href.split('/').pop().split('?')[0] || href); }
+               try { name = decodeURIComponent(href.split('/').filter(Boolean).pop() || href); }
                catch { name = href; }
-           }
-           if (name === '' || name === '/') { // If name is still empty or just a slash, try to derive from path
-                try {
-                    const pathSegments = new URL(href, baseHref).pathname.split('/').filter(Boolean);
-                    name = pathSegments.pop() || href;
-                    if (href.endsWith('/')) name += '/'; // Re-add trailing slash for display if it was a directory
-                } catch { /* fallback to original href if URL parsing fails */ }
            }
            if (name === '') return null;
 
-
           try {
             const fullUrl = new URL(href, baseHref).href;
-            const is_directory = href.endsWith('/') || name.endsWith('/'); // Check name as well for display consistency
+            const is_directory = href.endsWith('/') || name.endsWith('/');
             const lowerPath = new URL(fullUrl).pathname.toLowerCase();
             const isVideo = /\.(mp4|webm|ogg|m3u8|mpd)$/i.test(lowerPath);
             const isSubtitle = /\.(vtt|srt|ass)$/i.test(lowerPath);
 
             return { name, url: fullUrl, is_directory, isVideo, isSubtitle };
           } catch (e) {
-            console.warn(`Skipping invalid link: ${href}`, e);
+            console.warn(`Skipping invalid link: ${href} (Base: ${baseHref})`, e);
             return null;
           }
-        }).filter(item => item !== null && item.name !== 'favicon.ico'); // Also filter out favicon
+        }).filter(item => item !== null && item.name.toLowerCase() !== 'favicon.ico' && item.name.toLowerCase() !== 'index.html');
 
         parsedItems.sort((a, b) => {
             if (a.name === '../ (上一级)') return -1;
@@ -242,11 +229,13 @@ export default {
 
         this.fileItems = parsedItems;
         if (!this.fileItems.length) this.initialListMessage = '(目录为空或无法解析)';
+        this.$emit('status', `列表加载成功: ${this.fileItems.length} 项`, 'info', 3000);
 
       } catch (error) {
         console.error('获取文件列表失败:', error);
-        this.$emit('status', `获取列表失败: ${error.message}`, 'error');
-        this.initialListMessage = `获取列表失败: ${error.message.substring(0,100)}`; // Show truncated error
+        this.fetchError = `获取列表失败: ${error.message}`;
+        this.$emit('status', this.fetchError, 'error');
+        this.initialListMessage = '';
       } finally {
         this.isLoadingList = false;
       }
@@ -255,22 +244,22 @@ export default {
       this.hideContextMenu();
       if (item.is_directory) {
         this.localServerUrl = item.url;
+        this.$emit('update:serverUrlProp', item.url);
         this.fetchFiles();
       } else {
-        const lowerPath = item.url.toLowerCase(); // Use item.url for actual file type detection
+        const lowerPath = item.url.toLowerCase();
         if (item.isVideo || /\.(mp4|webm|ogg|m3u8|mpd)$/i.test(lowerPath)) {
           this.localVideoUrl = item.url;
-          this.$emit('status', `视频URL已填充: ${item.name}`, 'info', 3000);
+          this.$emit('status', `视频URL填充: ${item.name}`, 'info', 3000);
         } else if (item.isSubtitle || /\.(vtt|srt|ass)$/i.test(lowerPath)) {
           this.localSubtitleUrl = item.url;
-          this.$emit('status', `字幕URL已填充: ${item.name}`, 'info', 3000);
+          this.$emit('status', `字幕URL填充: ${item.name}`, 'info', 3000);
         } else {
           this.$emit('status', `未知文件类型: ${item.name}`, 'warning', 3000);
         }
       }
     },
     getFileIcon(item) {
-      // Use Font Awesome array format for icons
       if (item.name === '../ (上一级)') return ['fas', 'arrow-up'];
       if (item.is_directory) return ['fas', 'folder-open'];
       if (item.isVideo) return ['fas', 'file-video'];
@@ -283,27 +272,20 @@ export default {
             this.hideContextMenu();
             return;
         }
-
         event.preventDefault();
         this.contextMenu.targetUrl = itemElement.dataset.url;
         this.contextMenu.targetName = itemElement.dataset.name;
         this.contextMenu.itemType = itemElement.dataset.isDirectory === 'true' ? 'directory' : 'file';
-
         let x = event.clientX;
         let y = event.clientY;
-
         this.contextMenu.visible = true;
         this.$nextTick(() => {
-            const menuEl = this.$el.querySelector('.custom-context-menu-vue');
+            const menuEl = this.$refs.contextMenuRef;
             if (menuEl) {
                 const menuWidth = menuEl.offsetWidth;
                 const menuHeight = menuEl.offsetHeight;
-                if (y + menuHeight > window.innerHeight) {
-                    y -= menuHeight;
-                }
-                if (x + menuWidth > window.innerWidth) {
-                    x -= menuWidth;
-                }
+                if (y + menuHeight > window.innerHeight) y = window.innerHeight - menuHeight - 5;
+                if (x + menuWidth > window.innerWidth) x = window.innerWidth - menuWidth - 5;
             }
             this.contextMenu.top = Math.max(0, y);
             this.contextMenu.left = Math.max(0, x);
@@ -316,9 +298,7 @@ export default {
         const url = this.contextMenu.targetUrl;
         const name = this.contextMenu.targetName;
         this.hideContextMenu();
-
         if (!url) return;
-
         switch (action) {
             case 'download': {
                 const link = document.createElement('a');
@@ -330,294 +310,352 @@ export default {
                 this.$emit('status', `开始下载: ${name}`, 'info', 3000);
                 break;
             }
-            case 'fillVideo': {
+            case 'fillVideo':
                 this.localVideoUrl = url;
                 this.$emit('status', `视频URL填充: ${name}`, 'info', 3000);
                 break;
-            }
-            case 'fillSubtitle': {
+            case 'fillSubtitle':
                 this.localSubtitleUrl = url;
                 this.$emit('status', `字幕URL填充: ${name}`, 'info', 3000);
                 break;
-            }
-            case 'copyUrl': {
+            case 'copyUrl':
                 navigator.clipboard.writeText(url).then(() => {
-                    this.$emit('status', 'URL已复制', 'info', 2000);
+                    this.$emit('status', 'URL已复制到剪贴板', 'info', 2000);
                 }).catch(err => {
-                    this.$emit('status', '复制失败', 'error', 2000);
+                    this.$emit('status', '复制URL失败', 'error', 2000);
                     console.error('Copy URL failed:', err);
                 });
                 break;
-            }
         }
     },
-    hideContextMenuOnClickOutside(event) {
-      if (this.contextMenu.visible) {
-          const menuElement = this.$el.querySelector('.custom-context-menu-vue');
-          const clickedFileItem = event.target.closest('.file-item');
-          if (menuElement && !menuElement.contains(event.target) && !(event.button === 2 && clickedFileItem) ) {
-              this.hideContextMenu();
-          }
-      }
+    handleClickOutsideContextMenu(event) {
+        if (this.contextMenu.visible) {
+            const menuEl = this.$refs.contextMenuRef;
+            const clickedFileItem = event.target.closest('.file-item');
+            if (menuEl && !menuEl.contains(event.target) && !(event.button === 2 && clickedFileItem) ) {
+                this.hideContextMenu();
+            }
+        }
     }
   },
   mounted() {
-    document.addEventListener('click', this.hideContextMenuOnClickOutside);
+    document.addEventListener('click', this.handleClickOutsideContextMenu);
     if (this.localServerUrl && this.localServerUrl.trim() !== '') {
         this.fetchFiles();
     }
   },
   beforeUnmount() {
-    document.removeEventListener('click', this.hideContextMenuOnClickOutside);
+    document.removeEventListener('click', this.handleClickOutsideContextMenu);
   },
 };
 </script>
 
 <style scoped>
 /* Styles remain the same as the previous full version */
-/* ... (omitted for brevity but should be the same) ... */
-:root { 
+:root {
     --panel-bg: rgba(40, 50, 60, 0.9);
     --panel-border: #555;
     --text-color: #e0e0e0;
     --text-color-subtle: #bbb;
     --accent-color: #00b0ff;
     --accent-color-dark: #007bff;
-    --top-status-height: 0px; 
+    --top-status-height: 0px;
+    --input-bg: rgba(255,255,255,0.06);
+    --input-border: #555c66;
 }
 
 .controls-panel-container {
-  background-color: var(--panel-bg, rgba(40, 50, 60, 0.9));
-  border: 1px solid var(--panel-border, #555);
+  background-color: var(--panel-bg);
+  border: 1px solid var(--panel-border);
   border-radius: 8px;
   padding: 15px;
   display: flex;
   flex-direction: column;
-  gap: 20px;
-  width: 300px;
+  gap: 18px;
+  width: 320px;
   flex-shrink: 0;
-  position: relative; 
-  box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+  position: relative;
+  box-shadow: 0 4px 15px rgba(0,0,0,0.25);
   overflow-y: auto;
-  max-height: calc(100vh - 40px - var(--top-status-height, 0px)); 
-}
-.controls-panel-container.collapsed {
-  display: none;
+  max-height: calc(100vh - (2 * var(--body-padding-v, 20px)) - var(--top-status-height, 0px) - 2px);
 }
 
 .collapse-toggle-btn {
   position: absolute;
-  top: 10px;
-  right: 10px;
-  background: none;
+  top: 8px;
+  right: 8px;
+  background: transparent;
   border: none;
-  color: var(--text-color-subtle, #aaa);
-  font-size: 1.2em;
+  color: var(--text-color-subtle);
+  font-size: 1.1em;
   cursor: pointer;
-  padding: 5px;
-  border-radius: 4px;
-  transition: color 0.2s, background-color 0.2s;
-  z-index: 1;
+  padding: 6px;
+  border-radius: 50%;
+  transition: color 0.2s, background-color 0.2s, transform 0.2s;
+  z-index: 10;
+  line-height: 1;
 }
 .collapse-toggle-btn:hover {
-  color: var(--text-color, #fff);
+  color: var(--text-color);
   background-color: rgba(255,255,255,0.1);
+  transform: scale(1.1);
 }
 
 .panel-section {
   display: flex;
   flex-direction: column;
-  gap: 10px; 
+  gap: 12px;
 }
-
+.inputs-section {
+    padding-bottom: 15px;
+}
 .file-browser-section {
-    border-top: 1px solid var(--panel-border, #444);
+    border-top: 1px solid var(--input-border);
     padding-top: 15px;
-    margin-top: 10px; 
-    flex-grow: 1; 
+    margin-top: 0;
+    flex-grow: 1;
     display: flex;
-    flex-direction: column; 
+    flex-direction: column;
+    min-height: 200px;
 }
 
 .input-group {
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 6px;
 }
 .input-group label {
-  font-size: 0.8em;
-  color: var(--text-color-subtle, #bbb);
+  font-size: 0.8rem;
+  font-weight: 500;
+  color: var(--text-color-subtle);
 }
 .input-group input[type="text"] {
-  padding: 8px 10px;
-  background-color: rgba(255,255,255,0.08);
-  border: 1px solid var(--panel-border, #555);
-  border-radius: 4px;
-  color: var(--text-color, #e0e0e0);
-  font-size: 0.9em;
+  padding: 9px 12px;
+  background-color: var(--input-bg);
+  border: 1px solid var(--input-border);
+  border-radius: 5px;
+  color: var(--text-color);
+  font-size: 0.9rem;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.input-group input[type="text"]::placeholder {
+    color: #778899;
 }
 .input-group input[type="text"]:focus {
-    border-color: var(--accent-color, #00b0ff);
-    box-shadow: 0 0 0 2px rgba(0, 176, 255, 0.3);
+    border-color: var(--accent-color);
+    box-shadow: 0 0 0 3px rgba(0, 176, 255, 0.25);
     outline: none;
+    background-color: rgba(255,255,255,0.08);
 }
 .filename-display {
-    font-size: 0.75em;
-    color: #999;
+    font-size: 0.7rem;
+    color: #8899aa;
     font-style: italic;
-    margin-top: 2px;
+    margin-top: 1px;
+    padding-left: 2px;
+    height: 1.1em;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    height: 1.2em; 
 }
 
 .action-button {
   padding: 10px 15px;
-  background-color: var(--accent-color, #00b0ff);
+  background-image: linear-gradient(to right, var(--accent-color-dark), var(--accent-color));
   color: white;
   border: none;
-  border-radius: 4px;
+  border-radius: 5px;
   cursor: pointer;
   font-weight: 500;
-  transition: background-color 0.2s;
+  font-size: 0.95rem;
+  transition: filter 0.2s, transform 0.1s;
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 8px;
+  text-shadow: 1px 1px 1px rgba(0,0,0,0.2);
 }
 .action-button:hover {
-  background-color: var(--accent-color-dark, #007bff);
+  filter: brightness(1.1);
+}
+.action-button:active {
+  transform: translateY(1px);
+  filter: brightness(0.95);
+}
+.action-button:disabled {
+    background-image: none;
+    background-color: #555c66;
+    color: #8899aa;
+    cursor: not-allowed;
+    filter: none;
+    text-shadow: none;
 }
 
 .server-url-wrapper {
     display: flex;
-    gap: 5px;
-    align-items: center; 
+    gap: 8px;
+    align-items: center;
 }
 .server-url-wrapper input[type="text"] {
-    flex-grow: 1; 
+    flex-grow: 1;
 }
 .fetch-list-btn {
-    padding: 8px 10px;
-    font-size: 0.9em;
-    flex-shrink: 0; 
+    padding: 9px 12px;
+    font-size: 0.9rem;
+    flex-shrink: 0;
+    background-image: none;
+    background-color: #4a5568;
+}
+.fetch-list-btn:hover:not(:disabled) {
+    background-color: #5a6578;
+    filter: brightness(1.1);
 }
 
 
 .file-list-wrapper {
-  background-color: rgba(0,0,0,0.1);
-  border: 1px solid var(--panel-border, #444);
-  border-radius: 4px;
+  background-color: rgba(0,0,0,0.15);
+  border: 1px solid var(--input-border);
+  border-radius: 5px;
   padding: 8px;
   min-height: 150px;
-  max-height: 250px; 
+  max-height: 300px;
   overflow-y: auto;
-  flex-grow: 1; 
+  flex-grow: 1;
   scrollbar-width: thin;
-  scrollbar-color: var(--accent-color, #00b0ff) #333;
+  scrollbar-color: var(--accent-color) #2d3748;
 }
-.file-list-wrapper::-webkit-scrollbar { width: 6px; }
-.file-list-wrapper::-webkit-scrollbar-track { background: #333; border-radius: 3px; }
-.file-list-wrapper::-webkit-scrollbar-thumb { background-color: var(--accent-color, #00b0ff); border-radius: 3px; }
+.file-list-wrapper::-webkit-scrollbar { width: 8px; }
+.file-list-wrapper::-webkit-scrollbar-track { background: #2d3748; border-radius: 4px; }
+.file-list-wrapper::-webkit-scrollbar-thumb { background-color: var(--accent-color); border-radius: 4px; border: 2px solid #2d3748; }
 
 .list-placeholder {
-    color: #888;
+    color: #778899;
     text-align: center;
-    padding: 20px;
+    padding: 25px 10px;
     font-style: italic;
+    font-size: 0.9rem;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    flex-grow: 1;
+}
+.list-placeholder.error-text {
+    color: var(--status-error-color, #dc3545); /* Ensure this var is defined or use direct color */
+    font-style: normal;
+    font-weight: 500;
 }
 
 .file-item {
-  padding: 5px 8px;
-  border-radius: 3px;
+  padding: 6px 10px;
+  border-radius: 4px;
   cursor: pointer;
   display: flex;
   align-items: center;
-  gap: 6px;
-  color: var(--text-color-subtle, #bbb);
-  transition: background-color 0.15s, color 0.15s;
-  overflow: hidden; 
+  gap: 8px;
+  color: var(--text-color-subtle);
+  transition: background-color 0.15s, color 0.15s, transform 0.1s;
+  font-size: 0.85rem;
 }
-.file-item span { 
+.file-item span {
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    flex-grow: 1; 
+    flex-grow: 1;
 }
 .file-item:hover {
-  background-color: rgba(0, 176, 255, 0.2);
-  color: var(--text-color, #fff);
+  background-color: rgba(0, 176, 255, 0.15);
+  color: var(--text-color);
 }
 .file-item.directory {
-  color: var(--accent-color, #00b0ff);
+  color: var(--accent-color);
   font-weight: 500;
 }
+.file-item.directory:hover {
+    color: white;
+}
 .file-icon {
-  font-size: 0.9em;
-  width: 1.2em;
+  font-size: 1em;
+  width: 1.3em;
   text-align: center;
   flex-shrink: 0;
+  margin-right: 2px;
 }
-.file-item.video .file-icon { color: #ff8f00; } 
-.file-item.subtitle .file-icon { color: #64b5f6; } 
+.file-item.video .file-icon { color: #ff8f00; }
+.file-item.subtitle .file-icon { color: #64b5f6; }
 
 
 .custom-context-menu-vue {
   position: fixed;
-  background-color: #28323e; 
-  border: 1px solid #4b5867; 
+  background-color: #2a3a4a;
+  border: 1px solid var(--panel-border);
   border-radius: 6px;
-  box-shadow: 0 3px 10px rgba(0,0,0,0.3);
-  padding: 5px 0;
-  z-index: 1000;
-  min-width: 180px; 
-  color: var(--text-color, #e0e0e0);
+  box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+  padding: 6px 0;
+  z-index: 10000;
+  min-width: 200px;
+  color: var(--text-color);
+  font-size: 0.85rem;
 }
-.custom-context-menu-vue ul {
-  list-style: none;
-  padding: 0;
-  margin: 0;
-}
+.custom-context-menu-vue ul { list-style: none; padding: 0; margin: 0; }
 .custom-context-menu-vue li {
-  padding: 8px 15px; 
+  padding: 9px 18px;
   cursor: pointer;
   display: flex;
   align-items: center;
-  gap: 10px; 
-  font-size: 0.9em;
-  transition: background-color 0.15s;
+  gap: 10px;
+  transition: background-color 0.15s, color 0.15s;
 }
-.custom-context-menu-vue li .fa-icon { 
-    font-size: 1em; 
-    color: var(--text-color-subtle, #aaa);
+.custom-context-menu-vue li .fa-icon {
+    font-size: 1em;
+    color: var(--text-color-subtle);
+    width: 1.1em;
+    text-align: center;
     transition: color 0.15s;
 }
 .custom-context-menu-vue li:hover {
-  background-color: var(--accent-color, #00b0ff);
-  color: white; 
+  background-color: var(--accent-color);
+  color: white;
 }
 .custom-context-menu-vue li:hover .fa-icon {
-    color: white; 
+    color: white;
 }
 .custom-context-menu-vue li.separator {
     height: 1px;
-    background-color: #4b5867;
-    margin: 4px 0;
+    background-color: var(--panel-border);
+    margin: 5px 0;
     padding: 0;
     cursor: default;
 }
 .custom-context-menu-vue li.separator:hover {
-    background-color: #4b5867; 
-    color: var(--text-color, #e0e0e0); 
+    background-color: var(--panel-border);
+    color: var(--text-color);
 }
 
 @media (max-width: 1024px) {
     .controls-panel-container {
         width: 100%;
-        order: 3; 
-        margin-top: 15px;
-        max-height: 45vh; 
+        order: 3;
+        margin-top: var(--main-gap, 20px);
+        max-height: 50vh;
     }
+}
+@media (max-width: 768px) {
+    .controls-panel-container {
+        gap: 15px;
+        padding: 12px;
+    }
+    .file-browser-section {
+        padding-top: 12px;
+    }
+    .input-group input[type="text"], .action-button, .fetch-list-btn {
+        font-size: 0.85rem;
+        padding: 8px 10px;
+    }
+    .file-list-wrapper { max-height: 200px; }
+    .file-item { font-size: 0.8rem; padding: 5px 8px; }
+    .custom-context-menu-vue { font-size: 0.8rem; min-width: 180px; }
+    .custom-context-menu-vue li { padding: 8px 15px; }
 }
 </style>
