@@ -4,7 +4,6 @@
     <div class="main-content-area">
       <ControlsPanel
         v-if="!isPanelCollapsed"
-        :is-collapsed="isPanelCollapsed"
         @toggle-collapse="togglePanelCollapse"
         @load-media="handleLoadMedia"
         :video-url-prop="currentVideoUrl"
@@ -26,12 +25,11 @@
       <VideoPlayer
         ref="videoPlayerRef"
         :video-src-obj="videoToLoad"
-        :subtitle-url="subtitleUrlForPlayer"
+        :subtitle-data="activeSubtitleData"
         @player-ready="onPlayerReady"
         @metadata-loaded="onPlayerMetadataLoaded"
         @player-error="handlePlayerError"
         @player-play="handlePlayerPlay"
-        @subtitle-load-status="handleSubtitleLoadStatus"
       />
     </div>
   </div>
@@ -41,6 +39,7 @@
 import StatusMessage from './components/StatusMessage.vue';
 import ControlsPanel from './components/ControlsPanel.vue';
 import VideoPlayer from './components/VideoPlayer.vue';
+import SubtitleManager from '@/services/SubtitleManager.js'; // Import the manager
 import 'video.js/dist/video-js.css';
 
 export default {
@@ -57,19 +56,18 @@ export default {
       isPanelCollapsed: false,
       isSmallScreen: window.innerWidth <= 1024,
 
-      // URLs directly managed by App, passed to ControlsPanel and then to VideoPlayer
       currentVideoUrl: '',
-      currentSubtitleUrl: '',
+      currentSubtitleUrl: '', // This will be used to fetch/cache via SubtitleManager
       currentServerUrl: '',
 
-      // Data to trigger VideoPlayer updates
-      videoToLoad: null,            // { src: 'url', type: 'video/mp4' }
-      subtitleUrlForPlayer: null, // Just the URL string
+      videoToLoad: null,
+      activeSubtitleData: null, // This will hold { vttContent, name, ext, originalUrl } for VideoPlayer
 
       clearStatusTimeout: null,
     };
   },
   methods: {
+    // ... (showStatus, clearStatus, togglePanelCollapse, updateTopStatusHeight, getFilenameFromUrl, handleResize - same as before)
     updateTopStatusHeight() {
         this.$nextTick(() => {
             const statusEl = this.$el.querySelector('.status-message-box');
@@ -81,7 +79,6 @@ export default {
       this.statusMessage = message;
       this.statusType = type;
       this.updateTopStatusHeight();
-
       if (this.clearStatusTimeout) clearTimeout(this.clearStatusTimeout);
       if (duration > 0) {
         this.clearStatusTimeout = setTimeout(() => {
@@ -100,62 +97,6 @@ export default {
     togglePanelCollapse() {
       this.isPanelCollapsed = !this.isPanelCollapsed;
     },
-    handleLoadMedia({ videoUrl, subtitleUrl }) {
-      this.clearStatus();
-      if (!videoUrl) {
-        this.showStatus('错误: 请输入视频文件URL', 'error');
-        return;
-      }
-
-      // Update current URLs (which are bound to ControlsPanel)
-      this.currentVideoUrl = videoUrl;
-      this.currentSubtitleUrl = subtitleUrl;
-
-      // Prepare data for VideoPlayer component
-      // VideoPlayer will handle fetching/parsing subtitle based on subtitleUrlForPlayer
-      this.videoToLoad = {
-        src: videoUrl,
-        // getVideoType is now a utility within VideoPlayer, but App can still call it if needed for other purposes
-        // For now, we let VideoPlayer determine type if not explicitly passed
-        type: this.$refs.videoPlayerRef?.getVideoType(videoUrl) || undefined,
-      };
-      this.subtitleUrlForPlayer = subtitleUrl || null; // Pass the URL, or null if empty
-
-      if (subtitleUrl) {
-        this.showStatus(`准备加载视频和字幕: ${this.getFilenameFromUrl(subtitleUrl)}...`, 'info');
-      } else {
-        this.showStatus('准备加载视频...', 'info');
-      }
-    },
-    // handleFetchFileListInternal is removed as ControlsPanel manages its own serverUrl
-    // and emits update:serverUrlProp which App listens to.
-    // If App needed to react to the list itself, then an event would be needed.
-
-    onPlayerReady() {
-      this.showStatus('播放器准备就绪。', 'info', 3000);
-    },
-    onPlayerMetadataLoaded(videoName) { // VideoPlayer can emit the video name
-      this.showStatus(`视频 (${videoName || '未知'}) 元数据已加载.`, 'info', 3000);
-      // Subtitle loading is now primarily handled within VideoPlayer based on its props
-    },
-    handlePlayerError(errorMsg) {
-      this.showStatus(errorMsg, 'error');
-      if (this.isPanelCollapsed) {
-        this.togglePanelCollapse();
-      }
-    },
-    handlePlayerPlay() {
-      if (this.statusType !== 'error' && this.statusType !== 'warning') {
-        this.clearStatus();
-      }
-    },
-    handleSubtitleLoadStatus({ success, message, name }) {
-        if (success) {
-            this.showStatus(`字幕 (${name}) 加载成功。`, 'info', 5000);
-        } else {
-            this.showStatus(`加载字幕 (${name || '未知'}) 失败: ${message}`, 'error');
-        }
-    },
     getFilenameFromUrl(url) {
       if (!url) return '';
       try {
@@ -169,7 +110,76 @@ export default {
     handleResize() {
       this.isSmallScreen = window.innerWidth <= 1024;
       this.updateTopStatusHeight();
-    }
+    },
+
+    async handleLoadMedia({ videoUrl, subtitleUrl }) {
+      this.clearStatus();
+      if (!videoUrl) {
+        this.showStatus('错误: 请输入视频文件URL', 'error');
+        return;
+      }
+
+      this.currentVideoUrl = videoUrl;
+      this.currentSubtitleUrl = subtitleUrl; // Store the raw URL
+      this.activeSubtitleData = null; // Reset active subtitle for player
+
+      // Prepare video for player
+      this.videoToLoad = {
+        src: videoUrl,
+        type: this.$refs.videoPlayerRef?.getVideoType(videoUrl) || undefined,
+      };
+      
+      if (subtitleUrl) {
+        this.showStatus(`正在加载字幕: ${this.getFilenameFromUrl(subtitleUrl)}...`, 'info');
+        try {
+          // Asynchronously fetch and cache the subtitle.
+          // The result will be passed to VideoPlayer once the video is ready (onPlayerMetadataLoaded)
+          // or if subtitle loads faster.
+          const subtitleData = await SubtitleManager.fetchAndCacheSubtitle(subtitleUrl);
+          // If video is already playing or metadata loaded, we might need to update activeSubtitleData here.
+          // For simplicity, we'll set it now and let VideoPlayer's watcher handle it.
+          this.activeSubtitleData = subtitleData;
+          this.showStatus(`字幕 (${subtitleData.name}) 已加载并缓存.`, 'info', 5000);
+        } catch (error) {
+          this.activeSubtitleData = null; // Ensure it's null on error
+          this.showStatus(`加载字幕失败: ${error.message}`, 'error');
+        }
+      } else {
+        this.showStatus('仅加载视频 (无字幕).', 'info', 3000);
+      }
+    },
+
+    onPlayerReady() {
+      this.showStatus('播放器准备就绪。', 'info', 3000);
+    },
+    onPlayerMetadataLoaded(videoName) {
+      this.showStatus(`视频 (${videoName || '未知'}) 元数据已加载.`, 'info', 3000);
+      // At this point, video is ready. If subtitle was fetched by handleLoadMedia,
+      // its VTT content is in this.activeSubtitleData, which VideoPlayer's prop watcher will pick up.
+      // If currentSubtitleUrl exists but activeSubtitleData is still null (e.g., subtitle took longer),
+      // we could try to get it from cache again, or rely on the initial fetch in handleLoadMedia.
+      if (this.currentSubtitleUrl && !this.activeSubtitleData) {
+        const cachedSub = SubtitleManager.getSubtitleFromCache(this.currentSubtitleUrl);
+        if (cachedSub) {
+            console.log("App: Found subtitle in cache after metadata load, applying.");
+            this.activeSubtitleData = cachedSub;
+        } else {
+            console.warn("App: Subtitle URL present, but not yet in cache after metadata load.");
+             // Optionally re-trigger fetch if it failed or was slow, but handleLoadMedia should cover this.
+        }
+      }
+    },
+    handlePlayerError(errorMsg) {
+      this.showStatus(errorMsg, 'error');
+      if (this.isPanelCollapsed) {
+        this.togglePanelCollapse();
+      }
+    },
+    handlePlayerPlay() {
+      if (this.statusType !== 'error' && this.statusType !== 'warning') {
+        this.clearStatus();
+      }
+    },
   },
   mounted() {
     window.addEventListener('resize', this.handleResize);
@@ -180,6 +190,8 @@ export default {
     if (this.clearStatusTimeout) {
       clearTimeout(this.clearStatusTimeout);
     }
+    // Optionally clear subtitle cache on app close, or manage it more granularly
+    // SubtitleManager.clearCache();
   },
 };
 </script>
