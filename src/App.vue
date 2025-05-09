@@ -22,6 +22,7 @@
         @click="togglePanelCollapse"
         title="展开输入面板"
       >
+        <!-- Icons here (chevron-down, chevron-right) are in main.js library -->
         <font-awesome-icon :icon="['fas', isSmallScreen ? 'chevron-down' : 'chevron-right']" />
       </div>
       <VideoPlayer
@@ -58,20 +59,19 @@ export default {
       isSmallScreen: window.innerWidth <= 1024,
       currentVideoUrl: '',
       currentSubtitleUrl: '',
-      currentServerUrl: '', // Initialize empty, or with a default
+      currentServerUrl: '',
 
       videoToLoad: null,
-      subtitleToLoadForPlayer: null, // Renamed to avoid confusion with cached info
+      subtitleToLoadForPlayer: null,
 
-      // Cached subtitle details from VideoPlayer's fetchAndParseSubtitle
-      cachedSubtitleDetails: null, // Will store { vttContent, name, ext }
+      cachedSubtitleDetails: null,
+      clearStatusTimeout: null, // Added for managing timeout
     };
   },
   methods: {
-    // Method to be called by StatusMessage when its height might change
     updateTopStatusHeight() {
         this.$nextTick(() => {
-            const statusEl = this.$el.querySelector('.status-message-box'); // Assuming StatusMessage has this class
+            const statusEl = this.$el.querySelector('.status-message-box');
             const height = statusEl ? statusEl.offsetHeight : 0;
             document.documentElement.style.setProperty('--top-status-height', `${height}px`);
         });
@@ -79,7 +79,7 @@ export default {
     showStatus(message, type = 'info', duration = 0) {
       this.statusMessage = message;
       this.statusType = type;
-      this.updateTopStatusHeight(); // Update height when message changes
+      this.updateTopStatusHeight();
 
       if (this.clearStatusTimeout) {
         clearTimeout(this.clearStatusTimeout);
@@ -94,7 +94,7 @@ export default {
     },
     clearStatus() {
       this.statusMessage = '';
-      this.updateTopStatusHeight(); // Update height when message is cleared
+      this.updateTopStatusHeight();
       if (this.clearStatusTimeout) {
         clearTimeout(this.clearStatusTimeout);
         this.clearStatusTimeout = null;
@@ -112,16 +112,14 @@ export default {
 
       this.currentVideoUrl = videoUrl;
       this.currentSubtitleUrl = subtitleUrl;
-
-      this.cachedSubtitleDetails = null; // Reset cached subtitle
-      this.subtitleToLoadForPlayer = null; // Reset subtitle for player component
+      this.cachedSubtitleDetails = null;
+      this.subtitleToLoadForPlayer = null;
 
       if (subtitleUrl) {
         this.showStatus(`正在加载字幕: ${this.getFilenameFromUrl(subtitleUrl)}...`, 'info');
         try {
-          // fetchAndParseSubtitle is a method of VideoPlayer component
           const subtitleData = await this.$refs.videoPlayerRef.fetchAndParseSubtitle(subtitleUrl);
-          this.cachedSubtitleDetails = subtitleData; // Cache { vttContent, name, ext }
+          this.cachedSubtitleDetails = subtitleData;
           this.showStatus(`字幕 (${subtitleData.name}) 加载并缓存成功.`, 'info', 5000);
         } catch (error) {
           this.showStatus(`加载字幕失败: ${error.message}`, 'error');
@@ -134,13 +132,10 @@ export default {
         src: videoUrl,
         type: this.$refs.videoPlayerRef.getVideoType(videoUrl) || undefined,
       };
-      // VideoPlayer will react to videoToLoad.
-      // Subtitle will be passed on metadata-loaded.
     },
-    handleFetchFileListInternal(serverUrl) { // Renamed to avoid clash with emit name
+    handleFetchFileListInternal(serverUrl) {
       console.log('App is aware of fetch-file-list event for:', serverUrl);
       this.currentServerUrl = serverUrl;
-      // The actual fetching and list management is done within ControlsPanel
     },
     onPlayerReady() {
       this.showStatus('播放器准备就绪，请加载视频。', 'info', 3000);
@@ -148,7 +143,6 @@ export default {
     onPlayerMetadataLoaded() {
       this.showStatus('视频元数据已加载.', 'info', 2000);
       if (this.cachedSubtitleDetails) {
-        // Pass the cached subtitle to the player component now that video is ready
         this.subtitleToLoadForPlayer = { ...this.cachedSubtitleDetails };
       }
     },
@@ -175,15 +169,12 @@ export default {
     },
     handleResize() {
       this.isSmallScreen = window.innerWidth <= 1024;
-      this.updateTopStatusHeight(); // Also update on resize if status message is visible
+      this.updateTopStatusHeight();
     }
   },
   mounted() {
     window.addEventListener('resize', this.handleResize);
-    this.clearStatusTimeout = null;
-    this.updateTopStatusHeight(); // Initial height check
-    // Example: Set a default server URL if you want to load a list on startup
-    // this.currentServerUrl = 'http://localhost:8080/sample-files/';
+    this.updateTopStatusHeight();
   },
   beforeUnmount() {
     window.removeEventListener('resize', this.handleResize);
@@ -200,14 +191,14 @@ export default {
     --bg-gradient-start: #1a2a3a;
     --bg-gradient-end: #2a3a4a;
     --text-color: #e0e0e0;
-    --panel-bg: rgba(40, 50, 60, 0.92); /* Slightly more opaque */
-    --panel-border: #4b5867; /* Softer border */
+    --panel-bg: rgba(40, 50, 60, 0.92);
+    --panel-border: #4b5867;
     --input-bg: rgba(255, 255, 255, 0.06);
     --input-border: #555c66;
     --accent-color: #00b0ff;
     --accent-color-dark: #007acc;
     --text-color-subtle: #a0b0c0;
-    --top-status-height: 0px; /* Dynamically set by JS */
+    --top-status-height: 0px;
     --body-padding-v: 20px;
     --main-gap: 15px;
 }
@@ -234,7 +225,7 @@ body {
   gap: var(--main-gap);
   flex-grow: 1;
   width: 100%;
-  max-width: 1700px; /* Slightly wider max */
+  max-width: 1700px;
   margin: 0 auto;
   align-items: flex-start;
 }
@@ -257,12 +248,11 @@ body {
   box-shadow: 0 2px 8px rgba(0,0,0,0.2);
 }
 .uncollapse-button-wrapper:hover {
-    background-color: rgba(50, 60, 70, 0.95); /* Darken on hover */
+    background-color: rgba(50, 60, 70, 0.95);
     color: white;
     transform: scale(1.03);
 }
 
-/* Responsive adjustments */
 @media (max-width: 1024px) {
   #app-container {
     padding: 15px;
@@ -270,15 +260,15 @@ body {
   }
   .main-content-area {
     flex-direction: column;
-    gap: 20px; /* Increase gap when stacked */
+    gap: 20px;
     --main-gap: 20px;
   }
   .uncollapse-button-wrapper {
     width: 100%;
-    min-height: auto; /* Reset min-height for horizontal button */
+    min-height: auto;
     padding: 10px 15px;
-    order: 2; /* Position below video if ControlsPanel is order 3 */
-    margin-top: 0; /* Remove top margin, use main-gap */
+    order: 2;
+    margin-top: 0;
   }
 }
 @media (max-width: 768px) {

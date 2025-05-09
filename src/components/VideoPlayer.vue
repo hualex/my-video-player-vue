@@ -173,8 +173,8 @@ export default {
         if (!url) throw new Error('未提供字幕URL');
         let fileExt = '';
         const urlLower = url.toLowerCase();
-        // MODIFIED LINE FOR ESLINT: Removed unnecessary escapes for ?
-        const filenameMatch = url.match(/[^/\\&?]+\.\w{3,4}(?=([?&].*$|$))/);
+        // Corrected RegExp according to ESLint: no unnecessary escapes for & and ? inside []
+        const filenameMatch = url.match(/[^/\\&?]+\.\w{3,4}(?=(?:[?&].*|$))/);
         const filenameFromUrl = filenameMatch ? filenameMatch[0] : (url.substring(url.lastIndexOf('/') + 1) || 'subtitle');
 
         if (urlLower.includes('.vtt')) fileExt = 'vtt';
@@ -395,7 +395,6 @@ export default {
     color: white;
 }
 
-/* MODIFIED FOR :deep() */
 :deep(.video-js .vjs-text-track-display > div > div > div) {
     background-color: rgba(0, 0, 0, 0.7) !important;
     font-family: 'Segoe UI', Roboto, Arial, sans-serif !important;

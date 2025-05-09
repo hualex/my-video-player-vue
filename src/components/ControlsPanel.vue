@@ -1,6 +1,7 @@
 <template>
   <div :class="['controls-panel-container', { 'is-collapsed-style': isCollapsed }]" ref="controlsPanelRef">
     <button class="collapse-toggle-btn" @click="$emit('toggle-collapse')" title="折叠/展开面板">
+      <!-- Icon here (chevron-left) is in main.js library -->
       <font-awesome-icon :icon="['fas', 'chevron-left']" />
     </button>
 
@@ -16,6 +17,7 @@
         <span class="filename-display">{{ subtitleFilename }}</span>
       </div>
       <button class="action-button load-media-btn" @click="emitLoadMedia" :disabled="isLoadingList">
+        <!-- Icon here (play-circle) is in main.js library -->
         <font-awesome-icon :icon="['fas', 'play-circle']" /> 加载媒体
       </button>
     </div>
@@ -26,12 +28,14 @@
         <div class="server-url-wrapper">
           <input type="text" id="serverUrlInputPanel" v-model="localServerUrl" placeholder="例如: http://localhost/files/" @keyup.enter="fetchFiles" />
           <button class="action-button fetch-list-btn" @click="fetchFiles" :disabled="isLoadingList">
+            <!-- Icon here (folder-open) is in main.js library -->
             <font-awesome-icon :icon="['fas', 'folder-open']" /> 获取
           </button>
         </div>
       </div>
       <div class="file-list-wrapper" ref="fileListContainerRef" @contextmenu.prevent="handleFileListContextMenu">
         <div v-if="isLoadingList" class="list-placeholder">
+            <!-- Icon here (spinner) is in main.js library -->
             <font-awesome-icon icon="spinner" spin class="fa-lg" /> 加载列表中...
         </div>
         <div v-else-if="fetchError" class="list-placeholder error-text">
@@ -50,6 +54,7 @@
           :data-name="item.name"
           :data-is-directory="String(item.is_directory)"
         >
+          <!-- Icons from getFileIcon are now based on main.js library -->
           <font-awesome-icon :icon="getFileIcon(item)" class="file-icon" />
           <span>{{ item.name }}</span>
         </div>
@@ -65,28 +70,32 @@
     >
         <ul>
             <li v-if="contextMenu.itemType === 'file'" @click="contextAction('download')">
+                <!-- Icon here (download) is in main.js library -->
                 <font-awesome-icon :icon="['fas', 'download']" /> 下载
             </li>
             <li v-if="contextMenu.itemType === 'file'" class="separator"></li>
             <li v-if="contextMenu.itemType === 'file'" @click="contextAction('fillVideo')">
+                <!-- Icon here (video) is in main.js library -->
                 <font-awesome-icon :icon="['fas', 'video']" /> 填充视频URL
             </li>
             <li v-if="contextMenu.itemType === 'file'" @click="contextAction('fillSubtitle')">
+                <!-- Icon here (closed-captioning) is in main.js library -->
                 <font-awesome-icon :icon="['fas', 'closed-captioning']" /> 填充字幕URL
             </li>
             <li v-if="contextMenu.itemType === 'directory' || contextMenu.itemType === 'file'" @click="contextAction('copyUrl')">
+                <!-- Icon here (copy) is in main.js library -->
                 <font-awesome-icon :icon="['fas', 'copy']" /> 复制URL
             </li>
         </ul>
     </div>
-
   </div>
 </template>
 
 <script>
-import { faSpinner } from '@fortawesome/free-solid-svg-icons';
-import { library } from '@fortawesome/fontawesome-svg-core';
-library.add(faSpinner);
+// Spinner icon is added globally in main.js, so local import can be removed if desired
+// import { faSpinner } from '@fortawesome/free-solid-svg-icons';
+// import { library } from '@fortawesome/fontawesome-svg-core';
+// library.add(faSpinner);
 
 export default {
   name: 'ControlsPanel',
@@ -165,7 +174,7 @@ export default {
 
       try {
         let currentFetchUrl = urlToFetch;
-        // MODIFIED LINE FOR ESLINT: Removed unnecessary escape for ?
+        // ESLint Fix: Removed unnecessary escape for ?
         if (!currentFetchUrl.endsWith('/') && !currentFetchUrl.match(/\.[a-zA-Z0-9]{2,5}(?:[?#]|$)/)) {
             currentFetchUrl += '/';
         }
@@ -262,7 +271,8 @@ export default {
     getFileIcon(item) {
       if (item.name === '../ (上一级)') return ['fas', 'arrow-up'];
       if (item.is_directory) return ['fas', 'folder-open'];
-      if (item.isVideo) return ['fas', 'file-video'];
+      // Using faVideo as primary, faFileVideo is also available in main.js if you prefer that style
+      if (item.isVideo) return ['fas', 'video']; // Changed from 'file-video' to 'video'
       if (item.isSubtitle) return ['fas', 'file-lines'];
       return ['fas', 'file'];
     },
@@ -341,7 +351,7 @@ export default {
   mounted() {
     document.addEventListener('click', this.handleClickOutsideContextMenu);
     if (this.localServerUrl && this.localServerUrl.trim() !== '') {
-        this.fetchFiles();
+        // this.fetchFiles(); // Auto-fetch on mount can be enabled if desired
     }
   },
   beforeUnmount() {
@@ -351,7 +361,7 @@ export default {
 </script>
 
 <style scoped>
-/* Styles remain the same as the previous full version */
+/* Styles for ControlsPanel.vue */
 :root {
     --panel-bg: rgba(40, 50, 60, 0.9);
     --panel-border: #555;
@@ -362,6 +372,7 @@ export default {
     --top-status-height: 0px;
     --input-bg: rgba(255,255,255,0.06);
     --input-border: #555c66;
+    --status-error-color: #dc3545; /* Added for error text placeholder */
 }
 
 .controls-panel-container {
@@ -542,7 +553,7 @@ export default {
     flex-grow: 1;
 }
 .list-placeholder.error-text {
-    color: var(--status-error-color, #dc3545); /* Ensure this var is defined or use direct color */
+    color: var(--status-error-color, #dc3545);
     font-style: normal;
     font-weight: 500;
 }
@@ -582,8 +593,9 @@ export default {
   flex-shrink: 0;
   margin-right: 2px;
 }
-.file-item.video .file-icon { color: #ff8f00; }
-.file-item.subtitle .file-icon { color: #64b5f6; }
+/* Icons for file types are now correctly mapped via getFileIcon using registered names */
+.file-item.video .file-icon { color: #ff8f00; } /* Example color override if needed */
+.file-item.subtitle .file-icon { color: #64b5f6; } /* Example color override if needed */
 
 
 .custom-context-menu-vue {
@@ -607,7 +619,7 @@ export default {
   gap: 10px;
   transition: background-color 0.15s, color 0.15s;
 }
-.custom-context-menu-vue li .fa-icon {
+.custom-context-menu-vue li .fa-icon { /* Corrected selector for FontAwesomeIcon component if used directly, or just rely on icon class */
     font-size: 1em;
     color: var(--text-color-subtle);
     width: 1.1em;
@@ -618,7 +630,8 @@ export default {
   background-color: var(--accent-color);
   color: white;
 }
-.custom-context-menu-vue li:hover .fa-icon {
+.custom-context-menu-vue li:hover .fa-icon, /* Corrected selector for FontAwesomeIcon component if used directly */
+.custom-context-menu-vue li:hover > svg { /* If FontAwesomeIcon renders as SVG */
     color: white;
 }
 .custom-context-menu-vue li.separator {
