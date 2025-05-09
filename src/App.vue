@@ -7,7 +7,6 @@
         :is-collapsed="isPanelCollapsed"
         @toggle-collapse="togglePanelCollapse"
         @load-media="handleLoadMedia"
-        @fetch-file-list="handleFetchFileListInternal"
         :video-url-prop="currentVideoUrl"
         :subtitle-url-prop="currentSubtitleUrl"
         :server-url-prop="currentServerUrl"
@@ -22,17 +21,17 @@
         @click="togglePanelCollapse"
         title="展开输入面板"
       >
-        <!-- Icons here (chevron-down, chevron-right) are in main.js library -->
         <font-awesome-icon :icon="['fas', isSmallScreen ? 'chevron-down' : 'chevron-right']" />
       </div>
       <VideoPlayer
         ref="videoPlayerRef"
-        :video-src="videoToLoad"
-        :subtitle-info="subtitleToLoadForPlayer"
+        :video-src-obj="videoToLoad"
+        :subtitle-url="subtitleUrlForPlayer"
         @player-ready="onPlayerReady"
         @metadata-loaded="onPlayerMetadataLoaded"
         @player-error="handlePlayerError"
         @player-play="handlePlayerPlay"
+        @subtitle-load-status="handleSubtitleLoadStatus"
       />
     </div>
   </div>
@@ -57,15 +56,17 @@ export default {
       statusType: 'info',
       isPanelCollapsed: false,
       isSmallScreen: window.innerWidth <= 1024,
+
+      // URLs directly managed by App, passed to ControlsPanel and then to VideoPlayer
       currentVideoUrl: '',
       currentSubtitleUrl: '',
       currentServerUrl: '',
 
-      videoToLoad: null,
-      subtitleToLoadForPlayer: null,
+      // Data to trigger VideoPlayer updates
+      videoToLoad: null,            // { src: 'url', type: 'video/mp4' }
+      subtitleUrlForPlayer: null, // Just the URL string
 
-      cachedSubtitleDetails: null,
-      clearStatusTimeout: null, // Added for managing timeout
+      clearStatusTimeout: null,
     };
   },
   methods: {
@@ -81,14 +82,10 @@ export default {
       this.statusType = type;
       this.updateTopStatusHeight();
 
-      if (this.clearStatusTimeout) {
-        clearTimeout(this.clearStatusTimeout);
-      }
+      if (this.clearStatusTimeout) clearTimeout(this.clearStatusTimeout);
       if (duration > 0) {
         this.clearStatusTimeout = setTimeout(() => {
-          if (this.statusMessage === message) {
-            this.clearStatus();
-          }
+          if (this.statusMessage === message) this.clearStatus();
         }, duration);
       }
     },
@@ -103,48 +100,43 @@ export default {
     togglePanelCollapse() {
       this.isPanelCollapsed = !this.isPanelCollapsed;
     },
-    async handleLoadMedia({ videoUrl, subtitleUrl }) {
+    handleLoadMedia({ videoUrl, subtitleUrl }) {
       this.clearStatus();
       if (!videoUrl) {
         this.showStatus('错误: 请输入视频文件URL', 'error');
         return;
       }
 
+      // Update current URLs (which are bound to ControlsPanel)
       this.currentVideoUrl = videoUrl;
       this.currentSubtitleUrl = subtitleUrl;
-      this.cachedSubtitleDetails = null;
-      this.subtitleToLoadForPlayer = null;
 
-      if (subtitleUrl) {
-        this.showStatus(`正在加载字幕: ${this.getFilenameFromUrl(subtitleUrl)}...`, 'info');
-        try {
-          const subtitleData = await this.$refs.videoPlayerRef.fetchAndParseSubtitle(subtitleUrl);
-          this.cachedSubtitleDetails = subtitleData;
-          this.showStatus(`字幕 (${subtitleData.name}) 加载并缓存成功.`, 'info', 5000);
-        } catch (error) {
-          this.showStatus(`加载字幕失败: ${error.message}`, 'error');
-        }
-      } else {
-        this.showStatus('未提供字幕URL，仅加载视频.', 'info', 3000);
-      }
-
+      // Prepare data for VideoPlayer component
+      // VideoPlayer will handle fetching/parsing subtitle based on subtitleUrlForPlayer
       this.videoToLoad = {
         src: videoUrl,
-        type: this.$refs.videoPlayerRef.getVideoType(videoUrl) || undefined,
+        // getVideoType is now a utility within VideoPlayer, but App can still call it if needed for other purposes
+        // For now, we let VideoPlayer determine type if not explicitly passed
+        type: this.$refs.videoPlayerRef?.getVideoType(videoUrl) || undefined,
       };
-    },
-    handleFetchFileListInternal(serverUrl) {
-      console.log('App is aware of fetch-file-list event for:', serverUrl);
-      this.currentServerUrl = serverUrl;
-    },
-    onPlayerReady() {
-      this.showStatus('播放器准备就绪，请加载视频。', 'info', 3000);
-    },
-    onPlayerMetadataLoaded() {
-      this.showStatus('视频元数据已加载.', 'info', 2000);
-      if (this.cachedSubtitleDetails) {
-        this.subtitleToLoadForPlayer = { ...this.cachedSubtitleDetails };
+      this.subtitleUrlForPlayer = subtitleUrl || null; // Pass the URL, or null if empty
+
+      if (subtitleUrl) {
+        this.showStatus(`准备加载视频和字幕: ${this.getFilenameFromUrl(subtitleUrl)}...`, 'info');
+      } else {
+        this.showStatus('准备加载视频...', 'info');
       }
+    },
+    // handleFetchFileListInternal is removed as ControlsPanel manages its own serverUrl
+    // and emits update:serverUrlProp which App listens to.
+    // If App needed to react to the list itself, then an event would be needed.
+
+    onPlayerReady() {
+      this.showStatus('播放器准备就绪。', 'info', 3000);
+    },
+    onPlayerMetadataLoaded(videoName) { // VideoPlayer can emit the video name
+      this.showStatus(`视频 (${videoName || '未知'}) 元数据已加载.`, 'info', 3000);
+      // Subtitle loading is now primarily handled within VideoPlayer based on its props
     },
     handlePlayerError(errorMsg) {
       this.showStatus(errorMsg, 'error');
@@ -156,6 +148,13 @@ export default {
       if (this.statusType !== 'error' && this.statusType !== 'warning') {
         this.clearStatus();
       }
+    },
+    handleSubtitleLoadStatus({ success, message, name }) {
+        if (success) {
+            this.showStatus(`字幕 (${name}) 加载成功。`, 'info', 5000);
+        } else {
+            this.showStatus(`加载字幕 (${name || '未知'}) 失败: ${message}`, 'error');
+        }
     },
     getFilenameFromUrl(url) {
       if (!url) return '';
@@ -186,7 +185,7 @@ export default {
 </script>
 
 <style>
-/* Global styles */
+/* Global styles (same as before) */
 :root {
     --bg-gradient-start: #1a2a3a;
     --bg-gradient-end: #2a3a4a;
